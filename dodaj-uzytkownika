@@ -1,0 +1,91 @@
+#! /bin/sh
+
+
+USERKAT=/b2/SAMBA/homes
+SKRYPTY=/b2/SAMBA/netlogon
+BT=bt.capitalservice.pl
+HASLO_SAMBA=****
+SAMBA_TOOL='/usr/bin/samba-tool'
+USERS='USERS.txt'
+SKROTY='SKROTY.txt'
+
+
+exec 0< $USERS
+while
+IFS='|' read USER HASLO ODDZIAL ZASOB GN SN
+do
+#pomijamy puste linie i linie zaczynajace sie od #
+    if [ "`echo ${USER}|grep -v \"^#\|^$\"`" != "" ]
+    then
+echo "DZIAŁAM NA USERZE $USER"
+if [ -z "$HASLO" ] || [ -z "$ODDZIAL" ] || [ -z "$ZASOB" ] || [ -z "$GN" ] || [ -z "$SN" ]; then echo "NIE WSZYSTKIE POLA POPRAWNIE WYPEŁNIONE - BRAK WYMAGANYCH PARAMETRÓW"; exit 0; fi
+echo "SPRAWDZAM, CZY TAKIE KONTO JUŻ ISTNIEJE"
+    if [ -n "`wbinfo -u | grep -i "^${USER}$" `" ] ; then
+        echo "${USER} - JEST JUŻ TAKI UŻYTKOWNIK !!!"
+    else
+	echo NIE MA GO JESZCZE, WIĘC DODAJĘ, login: $USER, oddzial: $ODDZIAL, zasob: $ZASOB, imie: $GN, nazwisko: $SN, haslo: $HASLO
+
+# TWORZENIE UŻYTKOWNIKA I POBRANIE JEGO ID
+
+adduser --firstuid 2000 --ingroup users --no-create-home --disabled-password --disabled-login --gecos "${GN} ${SN}" ${USER}
+$SAMBA_TOOL user create $USER $HASLO_SAMBA --use-username-as-cn --given-name="$GN" --surname="$SN"
+USER_ID=`wbinfo -i $USER | cut -f3 -d ":"`
+
+# DODAWANIE UZYTKOWNIKA DO GRUP
+    for j in `cat GROUPS.txt`
+    do
+	echo "ZAMIERZASZ DODAĆ UŻYTKOWNIKA: $USER DO GRUPY ${j}"
+	echo "POTWIERDŹ ZAMIAR WPISUJĄC LITERĘ 't'"
+	read input </dev/tty
+	if test "$input" = "t"
+	then
+	$SAMBA_TOOL group addmembers ${j} $USER
+	echo "UŻYTKOWNIK $USER ZOSTAŁ DODANY DO GRUPY ${j}"
+	else
+	echo "NIE POTWIERDZIŁEŚ - UŻYTKOWNIK $USER NIE ZOSTAŁ DODANY DO GRUPY ${j}"
+	fi
+    done
+
+#TWORZENIE KATALOGU DOMOWEGO
+    mkdir ${USERKAT}/${USER}
+    cp ./Intranet.url ${USERKAT}/${USER}
+    chown -R ${USER_ID}:100 ${USERKAT}/${USER}
+    chmod 4700 ${USERKAT}/${USER}
+    chmod g-s ${USERKAT}/${USER}
+
+#TWORZENIE SKRYPTU LOGOWANIA
+    echo "NET TIME  \\\\\SEJF /SET /YES" > ${SKRYPTY}/${USER}.bat
+    echo "NET USE U: \\\\\SEJF\\\\${USER} /YES" >> ${SKRYPTY}/${USER}.bat
+
+if test "$ODDZIAL" = "CEN"
+then
+    echo "NET USE V: \\\\\SEJF\\${ZASOB} /YES" >> ${SKRYPTY}/${USER}.bat
+    echo "NET USE W: \\\\\SEJF\\WSPOLNE /YES" >> ${SKRYPTY}/${USER}.bat
+    chmod 500 ${SKRYPTY}/${USER}.bat
+    chown -R ${USER_ID}:100 ${SKRYPTY}/${USER}.bat
+else
+    echo "NET USE V: \\\\\\$ODDZIAL\\WSPOLNE /user:admin cs-${ODDZIAL}.ssh22.net /YES" >> ${SKRYPTY}/${USER}.bat
+    chmod 500 ${SKRYPTY}/${USER}.bat
+    chown -R ${USER_ID}:100 ${SKRYPTY}/${USER}.bat
+
+#TWORZENIE KONTA NA SERWERZE POCZTOWYM DLA PRACOWNIKOW ODZIALU TERENOWEGO
+IMIE=`echo $USER | cut -c -1`
+NAZWISKO=`echo $USER | cut -c 2-`
+POCZTA=`echo $IMIE.$NAZWISKO`
+echo "Tworzę na serwerze pocztowym konto $POCZTA"
+ssh -n root@$BT "useradd $POCZTA -N -m -s /bin/false; echo "$POCZTA:$HASLO" | chpasswd"
+echo "Tworzę alias na serwerze pocztowym dla konta $POCZTA"
+
+
+while
+IFS=';' read ALIAS SKROT
+do
+    if test "$SKROT" = "$ODDZIAL"; then ssh -n root@$BT "sed -i '/^$ALIAS/ s/$/,$POCZTA/' /etc/aliases" ; fi
+done < $SKROTY
+
+fi
+    unix2dos ${SKRYPTY}/${USER}.bat
+echo " "
+    fi
+    fi
+done

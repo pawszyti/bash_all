@@ -1,0 +1,61 @@
+#! /bin/bash
+
+# Skrypt kopiujący przynależność do grup AD dla SEJF.
+# Zastosowanie: dla kontroleda domeny na SAMBA4
+# Written by Piotr Jakacki <jps@jps.pl>  10 marzec 2016 16:41:00 CEST
+
+
+RAPORT='./raport-nadawania-uprawnien.txt'
+
+#SPRAWDZENIE ILOSC PARAMETROW
+if test $# -ne 2; then
+        echo "uzycie: akcja <Z_KOGO> <NA_KOGO>";
+        exit 1
+fi
+
+echo "Co chesz zrobić? ( 1 - pokaż uprawnienia użytkownika źródłowego, 2 - skopiuj uprawnienia )"
+read ODP
+
+case $ODP in
+    1)
+#WYŚWIETLENIE OBECNYCH UPRAWNIEŃ DLA ŹRÓDŁOWEGO UŻYTKOWNIKA:
+if samba-tool user list | grep -q "^$1$"; then
+	echo "UŻYTKOWNIK ŹRÓDŁOWY ISTNIEJE";
+	date > $RAPORT;
+	echo "Użytkownik $1 jest członkiem następujących grup: (upewnij się u zleceniodawcy - przełożonego (właściciela), że nowy pracownik ma mieć do nich dostęp)." >> $RAPORT
+	samba-tool group list | while read grupa
+	do
+	if samba-tool group listmembers $grupa | grep -q "$1"; then
+	echo $grupa >> $RAPORT
+	fi
+	done
+        exit 1
+fi
+        echo "UŻYTKOWNIK ŹRÓDŁOWY NIE ISTNIEJE";
+exit 0
+    ;;
+    2)
+#SPRAWDZENIE CZY UŻYTKOWNICY ISTNIEJĄ I NADAWANIE UPRAWNIEŃ.
+if samba-tool user list | grep -q "^$1$"; then
+    if samba-tool user list | grep -q "^$2$"; then
+	echo "UŻYTKOWNIK ŹRÓDŁOWY I DOCELOWY ISTNIEJE";
+	date > $RAPORT;
+	echo "Skopiowano uprawnienia z użytkownika $1 na użytkownika $2 w następujących grupach:" >> $RAPORT
+	samba-tool group list | while read grupa
+	do
+	if samba-tool group listmembers $grupa | grep -q "$1"; then
+	echo $grupa >> $RAPORT
+	samba-tool group addmembers $grupa $2
+	adduser $2 $grupa
+	fi
+	done
+        exit 1
+    fi
+        echo "UŻYTKOWNIK DOCELOWY NIE ISTNIEJE";
+	exit 1
+fi
+        echo "UŻYTKOWNIK ŹRÓDŁOWY NIE ISTNIEJE";
+exit 0
+    ;;
+    *) echo "NIEWŁAŚCIWY WYBÓR - WPISZ CYFRĘ 1 lub 2 !" ;
+esac
